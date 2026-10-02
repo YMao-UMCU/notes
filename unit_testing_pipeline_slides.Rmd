@@ -1,0 +1,137 @@
+---
+title: "Unit testing structure for pipeline steps"
+subtitle: "Current `config_test` workflow (Case Study 8)"
+output:
+  slidy_presentation:
+    self_contained: true
+    incremental: false
+---
+
+## Why test a pipeline step?
+
+- **Parallel work:** input and expected output can be reviewed before all upstream/downstream steps are finished.
+- **Inspectability:** a small fixture makes step behavior concrete.
+- **Independent QC:** collaborators can validate the same input/output pair without running the full pipeline.
+
+The step specification still defines intended behavior; tests provide executable checks.
+
+## Project testing challenge
+
+- Pipeline steps are scripts, not isolated package functions.
+- A step may depend on: config objects, metadata files, sourced helpers, and project-relative paths.
+- The testing structure must therefore validate both logic and file/config wiring.
+
+## Current testing structure (high level)
+
+Three layers work together:
+
+1. `configuration/config_test.yaml` defines step-specific test config blocks.
+2. `tests/testthat/test_integration_steps.R` is a shared runner.
+3. `tests/testthat/data/...` stores fixture inputs and expected outputs.
+
+This keeps test setup in config and execution logic in one reusable script.
+
+## Core execution idea
+
+For each configured step test:
+ 
+1. Load `config_test.yaml`.
+2. Write it to `configuration/config_project.yaml`.
+3. Loop steps defined by `integration_tests[*].config_key`.
+4. Pick corresponding script, input, output, and expected output paths from the step config block.
+5. Remove old test output file(s).
+6. Source the step script.
+7. Compare produced output file(s) with expected fixture file(s).
+
+## Script mapping across templates
+
+| Template | input_path | output_path | expected_output_path |
+|:--|:--|:--|:--|
+| `config_project_sequential.yaml` | `data/*` | `data/*` | |
+| `config_test.yaml` | `tests/*` | `tests/*/actual/*` | `tests/*/expected/*` |
+
+- Sequential template points to production-like pipeline data.
+- Test template points to fixture input, test output location, and expected output.
+- Step script reads `config_project$create_eligibility$input_path` and `output_path`.
+
+## Why this structure is useful
+
+- Runs each step in a mode close to pipeline execution.
+- No more `if (test_mode)` flags in step scripts.
+- Makes dependencies explicit through config fields.
+- Reduces duplicated path definitions.
+- Scales by adding step blocks plus one list entry.
+
+## `create_eligibility` example (config_test)
+
+```yaml
+create_eligibility:
+  script_path: transformations/T3_study_design/source_code/create_eligibility.R
+  input_path: tests/testthat/data/d3_eligibility/D3_MULTIPLE_EPISODES.csv
+  output_path: tests/testthat/data/d3_eligibility/actual/D3_ELIGIBILITY.csv
+  expected_output_path: tests/testthat/data/d3_eligibility/D3_ELIGIBILITY.csv
+
+integration_tests:
+  - name: create_eligibility
+    config_key: create_eligibility
+```
+
+This is the reference pattern for a single-output step.
+
+## `create_eligibility` example (config_project_sequential)
+
+```yaml
+create_eligibility:
+  input_path: data/D3_study_variables/D3_MULTIVARIATE_EPISODES.parquet
+  output_path: data/D3_study_variables/D3_ELIGIBILITY.parquet
+
+```
+
+This is the reference pattern for a single-output step.
+
+## Test runner responsibilities
+
+`tests/testthat/test_integration_steps.R` currently handles:
+
+- Loading step config blocks by `config_key`
+- Output cleanup before run
+- Script execution via `source(script_path)`
+- Output vs expected file comparison
+
+It supports both single-file and multi-file output checks.
+
+## Current steps wired into this structure
+
+- `create_eligibility`
+- `create_cohort`
+- `create_baseline_tables`
+- `timevarying_covariates`
+
+Additional steps can be added once fixtures are available and step config uses full paths.
+
+## Path convention in the current structure
+
+- Prefer full project-relative paths in step config blocks.
+- Keep each step block as the single source for:
+  - script path
+  - input path fields
+  - output path field(s)
+  - expected output path field(s)
+- Keep `integration_tests` as a step list only (`name`, `config_key`).
+
+## Practical developer guide
+
+To onboard a new step with test:
+
+1. Add fixture input and expected output files under `tests/testthat/data/`.
+2. Create a new step script in the appropriate location. Add config block `config_project_sequential.yaml` with input/output paths.
+3. Add a project-level step block to `config_test.yaml`, same fields as the sequential block plus script path and expected output paths.
+4. Add one `integration_tests` entry with `config_key`.
+5. Run the shared integration runner.
+
+## Summary
+
+- Test each step independently: small fixtures and expected outputs make behavior concrete and reviewable before the full pipeline is ready.
+- Validate logic and wiring together: the shared runner executes step scripts using test configuration and compares generated files with expected results.
+- Extend through a consistent pattern: add fixtures, a step config block, and one integration_tests entry to bring a new step into the framework.
+- Pipeline step script defines intended behavior; config-driven tests make that behavior executable and repeatable.
